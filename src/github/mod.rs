@@ -125,10 +125,11 @@ fn process_message(
         if let Some(job) = job {
             match job_sender.try_send(job) {
                 Ok(()) => {}
-                Err(TrySendError::Full(_)) => error!("Dropped message because job queue is full"),
+                Err(TrySendError::Full(_)) => error!("Dropping job because queue is full"),
                 Err(TrySendError::Disconnected(_)) => panic!("Job queue disconnected"),
             }
         }
+        info!("Added new job to queue ({}/{:?})", job_sender.len(), job_sender.capacity());
     })
 }
 
