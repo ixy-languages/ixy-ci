@@ -11,6 +11,9 @@ take on the following roles:
 With this setup we can simultaneously test three applications and make sure that the whole scenario
 works correctly by inspecting the captured packets from `pcap`.
 
+Currently only tests the Virtio driver. Testing the ixgbe driver is planned but requires
+infrastructure changes.
+
 While ixy-ci does make sure that the build finishes correctly, you still may want to use ixy-ci in
 conjunction with traditional CI services to check builds across a larger variety of OS environments
 or to check things like formatting/linting.
@@ -91,4 +94,5 @@ reasons why this is needed). This should hopefully become obsolete in the future
 ## Future feature plans
 - Test on master branch push (+ cronjob?) => endpoint for badges which redirect to shields.io
 - Dashboard with status about current job, queue, past results
+- Test ixgbe driver somehow (SR-IOV, pci passthrough?)
 - Integration with GitHub checks API
