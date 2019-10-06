@@ -11,30 +11,35 @@ pub enum Error {
         #[snafu(source(from(PcapError, failure::Fail::compat)))]
         source: failure::Compat<PcapError>,
     },
-    #[snafu(display("Failed to parse ethernet frame: {:?}; packet: {:x?}", read_error, packet))]
+    #[snafu(display(
+        "Failed to parse ethernet frame: {:?}; packet: {:x?}",
+        read_error,
+        packet
+    ))]
     EtherParse {
         read_error: ReadError,
         packet: Vec<u8>,
     },
-    #[snafu(display("Malformed UDP packet (invalid length or missing \"ixy\"): {:x?}", packet))]
-    MalformedUdpPacket {
-        packet: Vec<u8>,
-    },
+    #[snafu(display(
+        "Malformed UDP packet (invalid length or missing \"ixy\"): {:x?}",
+        packet
+    ))]
+    MalformedUdpPacket { packet: Vec<u8> },
     #[snafu(display("Incorrect packet count: expected: {} actual: {}", expected, actual))]
-    IncorrectPacketCount {
-        expected: usize,
-        actual: usize,
-    },
-    #[snafu(display("Bad sequence number: expected {} packets but max sequence number was {}", packets, max_seq_num))]
-    BadSequenceNumber {
-        packets: usize,
-        max_seq_num: u32,
-    },
-    #[snafu(display("Wrong packet order: last sequence number was {} and now encountered {}", last_seq_num, seq_num))]
-    InvalidSequenceOrder {
-        last_seq_num: u32,
-        seq_num: u32,
-    },
+    IncorrectPacketCount { expected: usize, actual: usize },
+    #[snafu(display(
+        "Bad sequence number: expected {} packets but max sequence number was {}",
+        packets,
+        max_seq_num
+    ))]
+    BadSequenceNumber { packets: usize, max_seq_num: u32 },
+    #[snafu(display("Some sequence number occured more than once"))]
+    DuplicateSequenceNumber,
+    // #[snafu(display("Wrong packet order: last sequence number was {} and now encountered {}", last_seq_num, seq_num))]
+    // InvalidSequenceOrder {
+    //     last_seq_num: u32,
+    //     seq_num: u32,
+    // },
 }
 
 pub fn test_pcap(pcap: &[u8], pcap_n: usize) -> Result<(), Error> {
@@ -42,8 +47,9 @@ pub fn test_pcap(pcap: &[u8], pcap_n: usize) -> Result<(), Error> {
     let pcap_reader = PcapReader::new(pcap).context(Pcap)?;
 
     let mut count = 0;
-    let mut last_seq_num = None;
+    // let mut last_seq_num = None;
     let mut max_seq_num = 0;
+    let mut seq_nums = Vec::new();
     for pcap in pcap_reader {
         let pcap = pcap.context(Pcap)?;
         let packet = SlicedPacket::from_ethernet(&pcap.data).map_err(|e| Error::EtherParse {
@@ -60,15 +66,19 @@ pub fn test_pcap(pcap: &[u8], pcap_n: usize) -> Result<(), Error> {
             let len = packet.payload.len();
             let seq_num = LittleEndian::read_u32(&packet.payload[(len - 4)..]);
             max_seq_num = max_seq_num.max(seq_num);
-            if let Some(last_seq_num) = last_seq_num {
-                if seq_num <= last_seq_num {
-                    return Err(Error::InvalidSequenceOrder {
-                        last_seq_num,
-                        seq_num,
-                    });
-                }
-            }
-            last_seq_num = Some(seq_num);
+            seq_nums.push(seq_num);
+            // Currently disabled as there's some kind of packet reordering happening on OpenStack
+            // Using the local libvirt/qemu setup no packets are reordered
+            // Remove redundant duplicate packet check again after reenabling this
+            // if let Some(last_seq_num) = last_seq_num {
+            //     if seq_num <= last_seq_num {
+            //         return Err(Error::InvalidSequenceOrder {
+            //             last_seq_num,
+            //             seq_num,
+            //         });
+            //     }
+            // }
+            // last_seq_num = Some(seq_num);
             count += 1;
         } else {
             debug!("ignoring non-UDP packet")
@@ -90,6 +100,11 @@ pub fn test_pcap(pcap: &[u8], pcap_n: usize) -> Result<(), Error> {
             max_seq_num,
         }
     );
+
+    let pre_dedup = seq_nums.len();
+    seq_nums.sort_unstable();
+    seq_nums.dedup();
+    ensure!(seq_nums.len() == pre_dedup, DuplicateSequenceNumber);
 
     Ok(())
 }

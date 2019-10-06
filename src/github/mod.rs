@@ -129,7 +129,11 @@ fn process_message(
                 Err(TrySendError::Disconnected(_)) => panic!("Job queue disconnected"),
             }
         }
-        info!("Added new job to queue ({}/{:?})", job_sender.len(), job_sender.capacity());
+        info!(
+            "Added new job to queue ({}/{:?})",
+            job_sender.len(),
+            job_sender.capacity()
+        );
     })
 }
 
