@@ -122,6 +122,11 @@ fn process_message(
         }
     };
     job_future.map(move |job| {
+        info!(
+            "Adding new job to queue {:?} (current queue size: {})",
+            job,
+            job_sender.len(),
+        );
         if let Some(job) = job {
             match job_sender.try_send(job) {
                 Ok(()) => {}
@@ -129,11 +134,6 @@ fn process_message(
                 Err(TrySendError::Disconnected(_)) => panic!("Job queue disconnected"),
             }
         }
-        info!(
-            "Added new job to queue ({}/{:?})",
-            job_sender.len(),
-            job_sender.capacity()
-        );
     })
 }
 
