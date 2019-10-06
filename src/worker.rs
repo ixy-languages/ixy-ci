@@ -164,7 +164,6 @@ impl Worker {
         let cloud = openstack::connect_to_cloud(&self.openstack_config).context(OpenStack)?;
         let (ip_pktgen, ip_fwd, ip_pcap) =
             openstack::spawn_vms(&cloud, &self.openstack_config).context(OpenStack)?;
-            // ("138.246.233.100".parse().unwrap(), "138.246.233.95".parse().unwrap(), "138.246.233.105".parse().unwrap());
 
         let ret = self.test_repository_inner(
             &repo_config,
@@ -190,6 +189,10 @@ impl Worker {
         ip_pcap: IpAddr,
     ) -> Result<(Log, Log, Log), TestError> {
         info!("Using VMs at: {}, {}, {}", ip_pktgen, ip_fwd, ip_pcap);
+
+        // Temporary workaround because the ssh server sometimes isn't yet available
+        // TODO: Try connecting until it works instead of waiting
+        std::thread::sleep(Duration::from_secs(30));
 
         trace!("Connecting to pktgen");
         let mut vm_pktgen = Remote::connect(
