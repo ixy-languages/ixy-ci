@@ -1,0 +1,44 @@
+bind_address = "0.0.0.0:9999"
+# How many jobs can be in the queue at most
+job_queue_size = 10
+log_directory = "logs"
+
+[github]
+bot_name = "ixy-ci"
+api_token = "redacted"
+
+# Names are case-sensitive
+[github.webhook_secrets]
+"emmericp/ixy" = "redacted"
+"ixy-languages/ixy.rs" = "redacted"
+
+[openstack]
+# VM flavor to be used
+flavor ="lrz.medium"
+# VM base image to be used
+image ="Debian-10-buster"
+# SSH login name for the selected base image
+ssh_login = "debian"
+# SSH keypair to be used
+keypair ="ixy-ci"
+# Path to the private key corresponding to the selected keypair
+private_key_path ="/home/ixy-ci/.ssh/id_rsa"
+
+# Exported from OpenStack (except project domain which must be queried manually)
+auth_url = "https://cc.lrz.de:5000/v3"
+user_name = "user"
+user_domain = "ADS"
+password = "redacted"
+project_name = "project"
+project_domain = "project_domain"
+
+[test]
+# How many packets are captured for the test
+packets = 100_000
+
+# PCI addresses of the VirtIO NICs
+[test.pci_addresses]
+pktgen = "0000:00:06.0"
+fwd_src = "0000:00:06.0"
+fwd_dst = "0000:00:07.0"
+pcap = "0000:00:06.0"

@@ -1,0 +1,15 @@
+[package]
+name = "runner"
+version = "0.1.0"
+authors = ["Boris-Chengbiao Zhou <bobo1239@web.de>"]
+edition = "2018"
+
+[dependencies]
+libc = "0.2.62"
+
+# Optimize for size
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "z"
+panic = 'abort'
