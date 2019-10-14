@@ -122,12 +122,12 @@ fn process_message(
         }
     };
     job_future.map(move |job| {
-        info!(
-            "Adding new job to queue {:?} (current queue size: {})",
-            job,
-            job_sender.len(),
-        );
         if let Some(job) = job {
+            info!(
+                "Adding new job to queue {:?} (current queue size: {})",
+                job,
+                job_sender.len(),
+            );
             match job_sender.try_send(job) {
                 Ok(()) => {}
                 Err(TrySendError::Full(_)) => error!("Dropping job because queue is full"),
