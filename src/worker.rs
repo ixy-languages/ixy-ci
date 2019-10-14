@@ -191,8 +191,8 @@ impl Worker {
         info!("Using VMs at: {}, {}, {}", ip_pktgen, ip_fwd, ip_pcap);
 
         // Temporary workaround because the ssh server sometimes isn't yet available
-        // TODO: Try connecting until it works instead of waiting
-        std::thread::sleep(Duration::from_secs(30));
+        // FIXME: Try connecting until it works instead of waiting
+        std::thread::sleep(Duration::from_secs(60));
 
         trace!("Connecting to pktgen");
         let mut vm_pktgen = Remote::connect(
