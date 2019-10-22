@@ -26,7 +26,7 @@ or to check things like formatting/linting.
 ## How to test a new repository with ixy-ci
 To use ixy-ci you only need to follow these instructions:
 - Create a GitHub webhook for your repository (in your repository settings)
-    - URL: `http://138.246.233.98:9999/github/webhook`
+    - URL: `https://ci.ixy.rs/github/webhook`
     - Content type: `application/json`
     - Secret (e.g. `openssl rand -base64 48`); make sure to save this somewhere
     - Events: Issue comments & Pushes
@@ -77,10 +77,18 @@ ixy-ci requires a GitHub account to post results and to interact with the GitHub
 should work though we advise to use a dedicated bot account. You need to create a _personal access
 token_ (GitHub / Setting / Developer settings) with access to the `public_repo` scope.
 
-### Runner
-`cd runner && cargo build --release`
-ixy-ci will currently upload the compiled `runner` binary to the spawned VMs (see `remote.rs` for
-reasons why this is needed). This should hopefully become obsolete in the future...
+### Deploy with Docker
+
+```
+cargo build --release
+cd runner; cargo build --release; cd -
+docker build . -t ixy-ci
+docker volume create ixy-ci-config
+cp ~/.ssh/id_rsa /var/lib/docker/volumes/my-vol/_data/
+cp ~/.config/openstack/clouds.yaml /var/lib/docker/volumes/ixy-ci-config/_data/
+cp ixy-ci.toml.example /var/lib/docker/volumes/my-vol/_data/config.toml
+docker run --mount source=ixy-ci-config,target=/config -p 127.0.0.1:9999:8080 --restart always -d --name ixy-ci ixy-ci
+```
 
 ## TODO
 - Make logs available

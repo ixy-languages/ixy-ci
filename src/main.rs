@@ -20,8 +20,12 @@ use crate::worker::Worker;
 
 fn main() -> io::Result<()> {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let args = clap::App::new("ixy-ci server")
+        .version("0.1")
+        .arg_from_usage("--config <FILE> config.toml file")
+        .get_matches();
 
-    let config = fs::read_to_string("config.toml")?;
+    let config = fs::read_to_string(args.value_of("config").unwrap())?;
     let config: Config = toml::from_str(&config).expect("failed to deserialize config");
 
     let github = Github::new(

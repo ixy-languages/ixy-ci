@@ -1,6 +1,7 @@
 .PHONY: start
-start: config.toml runner/target/release/runner
-	env RUST_LOG=info,ixy_ci=trace cargo run --release
+start: config.toml runner-bin
+	env RUST_LOG=info,ixy_ci=trace cargo run --release -- --config config.toml
 
-runner/target/release/runner:
-	cd runner && cargo build --release
+runner-bin:
+	cd runner && cargo build --release && cp target/release/runner ../runner-bin
+

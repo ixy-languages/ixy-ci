@@ -1,5 +1,6 @@
+.*.sw[o-z]
 /target
 **/*.rs.bk
 /logs
 config.toml
-clouds.yaml
+runner-bin

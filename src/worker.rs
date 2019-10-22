@@ -376,7 +376,7 @@ fn prepare_vms(
         }
         // Required for CancellableCommand atm
         remote.upload_file(
-            Path::new("runner/target/release/runner"),
+            Path::new("runner-bin"),
             Path::new("runner"),
             0o777,
         )?;
