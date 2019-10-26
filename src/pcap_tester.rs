@@ -94,7 +94,7 @@ pub fn test_pcap(pcap: &[u8], pcap_n: usize) -> Result<(), Error> {
         }
     );
     ensure!(
-        max_seq_num as usize >= pcap_n && max_seq_num as usize <= pcap_n * 2,
+        max_seq_num as usize >= pcap_n - 1 && max_seq_num as usize <= pcap_n * 2,
         BadSequenceNumber {
             packets: pcap_n,
             max_seq_num,
