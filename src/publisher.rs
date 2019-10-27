@@ -52,8 +52,8 @@ impl Publisher {
                 TestTarget::Branch(branch) => {
                     info!(
                         "Test result for branch {} of {}: {}",
-                        report.repository,
                         branch,
+                        report.repository,
                         result.is_ok()
                     );
                     Box::new(futures::future::ok(()))
