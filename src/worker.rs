@@ -9,12 +9,14 @@ use log::*;
 use snafu::{ResultExt, Snafu};
 
 use crate::config::{OpenStackConfig, Repository, RepositoryConfig, TestConfig};
-use crate::openstack;
-use crate::pcap_tester;
 use crate::remote::{self, Log, Remote};
+use crate::{openstack, pcap_tester, utility};
 
 const PCAP_FILE: &str = "capture.pcap";
 const PCAP_TIMEOUT: Duration = Duration::from_secs(15);
+
+const SSH_MAX_RETRIES: usize = 10;
+const SSH_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Snafu)]
 pub enum TestError {
@@ -190,30 +192,34 @@ impl Worker {
     ) -> Result<(Log, Log, Log), TestError> {
         info!("Using VMs at: {}, {}, {}", ip_pktgen, ip_fwd, ip_pcap);
 
-        // Temporary workaround because the ssh server sometimes isn't yet available
-        // FIXME: Try connecting until it works instead of waiting
-        std::thread::sleep(Duration::from_secs(60));
-
         trace!("Connecting to pktgen");
-        let mut vm_pktgen = Remote::connect(
-            (ip_pktgen, 22).into(),
-            &self.openstack_config.ssh_login,
-            &self.openstack_config.private_key_path,
-        )
+        let mut vm_pktgen = utility::retry(SSH_MAX_RETRIES, SSH_RETRY_DELAY, || {
+            Remote::connect(
+                (ip_pktgen, 22).into(),
+                &self.openstack_config.ssh_login,
+                &self.openstack_config.private_key_path,
+            )
+        })
         .context(ConnectVm { vm: "pktgen" })?;
+
         trace!("Connecting to fwd");
-        let mut vm_fwd = Remote::connect(
-            (ip_fwd, 22).into(),
-            &self.openstack_config.ssh_login,
-            &self.openstack_config.private_key_path,
-        )
+        let mut vm_fwd = utility::retry(SSH_MAX_RETRIES, SSH_RETRY_DELAY, || {
+            Remote::connect(
+                (ip_fwd, 22).into(),
+                &self.openstack_config.ssh_login,
+                &self.openstack_config.private_key_path,
+            )
+        })
         .context(ConnectVm { vm: "fwd" })?;
+
         trace!("Connecting to pcap");
-        let mut vm_pcap = Remote::connect(
-            (ip_pcap, 22).into(),
-            &self.openstack_config.ssh_login,
-            &self.openstack_config.private_key_path,
-        )
+        let mut vm_pcap = utility::retry(SSH_MAX_RETRIES, SSH_RETRY_DELAY, || {
+            Remote::connect(
+                (ip_pcap, 22).into(),
+                &self.openstack_config.ssh_login,
+                &self.openstack_config.private_key_path,
+            )
+        })
         .context(ConnectVm { vm: "pcap" })?;
 
         let result = self.perform_test(

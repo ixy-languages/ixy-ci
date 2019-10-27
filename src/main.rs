@@ -4,6 +4,7 @@ mod openstack;
 mod pcap_tester;
 mod publisher;
 mod remote;
+mod utility;
 mod worker;
 
 use std::{fs, io, thread};

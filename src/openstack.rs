@@ -2,6 +2,7 @@ pub use openstack::Error;
 
 use std::net::IpAddr;
 use std::process::{Command, Output};
+use std::thread;
 use std::time::Duration;
 
 use fallible_iterator::FallibleIterator;
@@ -12,6 +13,7 @@ use openstack::{Cloud, ErrorKind, Refresh};
 use waiter::Waiter;
 
 use crate::config::OpenStackConfig;
+use crate::utility;
 
 // Fixed VM names as we require a specific OpenStack setup anyways
 const VM_PKTGEN: &str = "pktgen";
@@ -101,20 +103,14 @@ fn create_server(
     info!("Associating floating ip");
     floating_ip.associate(internet_port, None)?;
 
-    // Retry until the floating ip is fully associated
-    for _ in 0..MAX_RETRIES {
-        match server.floating_ip() {
-            None => {
-                std::thread::sleep(RETRY_DELAY);
-                server.refresh()?;
-            }
-            Some(ip) => return Ok(ip),
-        }
-    }
-    Err(Error::new(
-        ErrorKind::OperationTimedOut,
-        "ip association timed out",
-    ))
+    // Wait a bit and then retry until the floating ip is fully associated
+    thread::sleep(RETRY_DELAY);
+    utility::retry(MAX_RETRIES, RETRY_DELAY, || {
+        server.refresh()?;
+        server
+            .floating_ip()
+            .ok_or_else(|| Error::new(ErrorKind::OperationTimedOut, "ip association timed out"))
+    })
 }
 
 fn delete_server(cloud: &Cloud, name: &str) {
