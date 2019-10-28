@@ -6,4 +6,4 @@ COPY target/release/ixy-ci /ixy-ci
 COPY runner/target/release/runner /runner-bin
 ENV RUST_BACKTRACE 1
 ENV RUST_LOG info,ixy_ci=trace
-CMD /ixy-ci --config /config/config.toml
+CMD ["/ixy-ci", "--config", "/config/config.toml"]
