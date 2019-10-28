@@ -11,6 +11,7 @@ use std::{fs, io, thread};
 
 use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpServer};
+use clap::{crate_version, Arg};
 use futures::Stream;
 use hubcaps::{Credentials, Github};
 
@@ -21,8 +22,8 @@ use crate::worker::Worker;
 fn main() -> io::Result<()> {
     env_logger::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = clap::App::new("ixy-ci server")
-        .version("0.1")
-        .arg_from_usage("--config <FILE> config.toml file")
+        .version(crate_version!())
+        .arg(Arg::from_usage("-c, --config <FILE> 'config.toml file'").default_value("config.toml"))
         .get_matches();
 
     let config = fs::read_to_string(args.value_of("config").unwrap())?;

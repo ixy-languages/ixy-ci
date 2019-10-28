@@ -375,11 +375,7 @@ fn prepare_vms(
             remote.execute_command(&format!("cd {} && {}", repository.name, step))?;
         }
         // Required for CancellableCommand atm
-        remote.upload_file(
-            Path::new("runner-bin"),
-            Path::new("runner"),
-            0o777,
-        )?;
+        remote.upload_file(Path::new("runner-bin"), Path::new("runner"), 0o777)?;
         remote.execute_command("sudo mv runner /usr/bin/runner")?;
     }
     Ok(())
