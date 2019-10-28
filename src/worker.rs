@@ -9,6 +9,7 @@ use log::*;
 use snafu::{ResultExt, Snafu};
 
 use crate::config::{OpenStackConfig, Repository, RepositoryConfig, TestConfig};
+use crate::openstack::OpenStack;
 use crate::remote::{self, Log, Remote};
 use crate::{openstack, pcap_tester, utility};
 
@@ -30,7 +31,7 @@ pub enum TestError {
         source: remote::Error,
     },
     #[snafu(display("An OpenStack error occurred: {}", source))]
-    OpenStack { source: openstack::Error },
+    OpenStackError { source: openstack::Error },
     #[snafu(display("Failed to save logs: {}", source))]
     SaveLogs { source: io::Error },
     #[snafu(display("An error occured while performing tests: {}", source))]
@@ -75,7 +76,7 @@ pub struct Worker {
     log_directory: PathBuf,
     job_receiver: Receiver<Job>,
     report_sender: Sender<Report>,
-    openstack_config: OpenStackConfig,
+    openstack: OpenStack,
     test_config: TestConfig,
 }
 
@@ -83,7 +84,7 @@ impl Worker {
     pub fn new(
         job_queue_size: usize,
         log_directory: PathBuf,
-        openstack_config: OpenStackConfig,
+        openstack: OpenStackConfig,
         test_config: TestConfig,
     ) -> (Worker, Sender<Job>, Receiver<Report>) {
         let (job_sender, job_receiver) = crossbeam_channel::bounded(job_queue_size);
@@ -93,7 +94,7 @@ impl Worker {
                 log_directory,
                 job_receiver,
                 report_sender,
-                openstack_config,
+                openstack: OpenStack::new(openstack).expect("failed to connect to OpenStack"),
                 test_config,
             },
             job_sender,
@@ -163,9 +164,7 @@ impl Worker {
     ) -> Result<(Log, Log, Log), TestError> {
         let repo_config = fetch_repo_config(repository, branch)?;
 
-        let cloud = openstack::connect_to_cloud(&self.openstack_config).context(OpenStack)?;
-        let (ip_pktgen, ip_fwd, ip_pcap) =
-            openstack::spawn_vms(&cloud, &self.openstack_config).context(OpenStack)?;
+        let (ip_pktgen, ip_fwd, ip_pcap) = self.openstack.spawn_vms().context(OpenStackError)?;
 
         let ret = self.test_repository_inner(
             &repo_config,
@@ -176,7 +175,7 @@ impl Worker {
             ip_pcap,
         );
 
-        openstack::clean_environment(&cloud).context(OpenStack)?;
+        self.openstack.clean_environment().context(OpenStackError)?;
 
         ret
     }
@@ -196,8 +195,8 @@ impl Worker {
         let mut vm_pktgen = utility::retry(SSH_MAX_RETRIES, SSH_RETRY_DELAY, || {
             Remote::connect(
                 (ip_pktgen, 22).into(),
-                &self.openstack_config.ssh_login,
-                &self.openstack_config.private_key_path,
+                &self.openstack.config.ssh_login,
+                &self.openstack.config.private_key_path,
             )
         })
         .context(ConnectVm { vm: "pktgen" })?;
@@ -206,8 +205,8 @@ impl Worker {
         let mut vm_fwd = utility::retry(SSH_MAX_RETRIES, SSH_RETRY_DELAY, || {
             Remote::connect(
                 (ip_fwd, 22).into(),
-                &self.openstack_config.ssh_login,
-                &self.openstack_config.private_key_path,
+                &self.openstack.config.ssh_login,
+                &self.openstack.config.private_key_path,
             )
         })
         .context(ConnectVm { vm: "fwd" })?;
@@ -216,8 +215,8 @@ impl Worker {
         let mut vm_pcap = utility::retry(SSH_MAX_RETRIES, SSH_RETRY_DELAY, || {
             Remote::connect(
                 (ip_pcap, 22).into(),
-                &self.openstack_config.ssh_login,
-                &self.openstack_config.private_key_path,
+                &self.openstack.config.ssh_login,
+                &self.openstack.config.private_key_path,
             )
         })
         .context(ConnectVm { vm: "pcap" })?;
@@ -317,7 +316,7 @@ impl Worker {
         let pcap = vm_pcap
             .download_file(Path::new(&format!(
                 "/home/{}/{}/{}",
-                self.openstack_config.ssh_login, repository.name, PCAP_FILE
+                self.openstack.config.ssh_login, repository.name, PCAP_FILE
             )))
             .context(RemoteError)?;
         pcap_tester::test_pcap(&pcap, self.test_config.packets)

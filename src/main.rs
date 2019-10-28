@@ -37,12 +37,26 @@ fn main() -> io::Result<()> {
 
     fs::create_dir_all(&config.log_directory).expect("failed to create configured log directory");
 
-    let (worker, job_sender, report_receiver) = Worker::new(
+    // The OpenStack `Cloud` isn't `Send` so we have to initialize the `Worker` on its own thread
+    // and send back some things.
+    // TODO: Can we do this more easily?
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (job_queue_size, log_directory, openstack, test) = (
         config.job_queue_size,
         config.log_directory,
         config.openstack,
         config.test,
     );
+    thread::spawn(move || {
+        let (worker, job_sender, report_receiver) =
+            Worker::new(job_queue_size, log_directory, openstack, test);
+
+        tx.send((job_sender, report_receiver)).unwrap();
+
+        // TODO: Restart on panic
+        worker.run();
+    });
+    let (job_sender, report_receiver) = rx.recv().unwrap();
 
     // job_sender
     //     .send(worker::Job::TestBranch {
@@ -53,11 +67,6 @@ fn main() -> io::Result<()> {
     //         branch: "ci".to_string(),
     //     })
     //     .unwrap();
-
-    thread::spawn(move || {
-        // TODO: Restart on panic
-        worker.run();
-    });
 
     let sys = actix_rt::System::new("runtime");
 

@@ -1,2 +1,4 @@
-target/*/deps
-
+target
+runner
+!target/release/ixy-ci
+!runner/target/release/runner

@@ -68,9 +68,9 @@ openstack --os-cloud openstack project show <project_name>
 openstack --os-cloud openstack domain show <domain_id>
 ```
 
-### `clouds.yaml` & OpenStack CLI
-Currently you also need to keep a `clouds.yaml` around as we sometimes have to use the OpenStack CLI
-tool due to missing APIs in the openstack crate.
+### OpenStack CLI
+Currently ixy-ci requires that the OpenStack CLI is available due to missing APIs in the openstack
+crate.
 
 ### GitHub bot account
 ixy-ci requires a GitHub account to post results and to interact with the GitHub API. Any account
@@ -84,9 +84,8 @@ cargo build --release
 cd runner; cargo build --release; cd -
 docker build . -t ixy-ci
 docker volume create ixy-ci-config
-cp ~/.ssh/id_rsa /var/lib/docker/volumes/my-vol/_data/
-cp ~/.config/openstack/clouds.yaml /var/lib/docker/volumes/ixy-ci-config/_data/
-cp ixy-ci.toml.example /var/lib/docker/volumes/my-vol/_data/config.toml
+cp ~/.ssh/id_rsa /var/lib/docker/volumes/ixy-ci-config/_data/
+cp config.toml.example /var/lib/docker/volumes/ixy-ci-config/_data/config.toml
 docker run --mount source=ixy-ci-config,target=/config -p 127.0.0.1:9999:8080 --restart always -d --name ixy-ci ixy-ci
 ```
 
