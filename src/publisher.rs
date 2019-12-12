@@ -56,6 +56,9 @@ impl Publisher {
                         report.repository,
                         result.is_ok()
                     );
+                    if let Err(e) = result {
+                        error!("Error: {}", e);
+                    }
                     Box::new(futures::future::ok(()))
                 }
             },

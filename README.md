@@ -1,7 +1,7 @@
 # ixy-ci
 
 A CI service to test the [ixy userspace network driver](https://github.com/emmericp/ixy) and its
-[derivatives](https://github.com/ixy-languages). The basic idea is spawn three independent VMs which
+[derivatives](https://github.com/ixy-languages). The basic idea is to spawn three independent VMs which
 take on the following roles:
 
 - `pktgen` pushes network packets (with sequence numbers) into network 1
@@ -90,7 +90,6 @@ docker run --mount source=ixy-ci-config,target=/config -p 127.0.0.1:9999:8080 --
 ```
 
 ## TODO
-- Make logs available
 - Only allow configured users to start tests (to prevent abuse)
 - Do more stuff concurrently once async/await is ready (also trussh instead of libssh2)
 - Fix issue where ixy-ci cannot be terminated via ctrl+c after a message has been posted on GitHub
