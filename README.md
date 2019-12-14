@@ -102,3 +102,6 @@ docker run --mount source=ixy-ci-config,target=/config -p 127.0.0.1:9999:8080 --
 - Dashboard with status about current job, queue, past results
 - Test ixgbe driver somehow (SR-IOV, pci passthrough?)
 - Integration with GitHub checks API
+
+## License
+This project is licensed under the terms of the MIT license.
