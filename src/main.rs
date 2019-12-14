@@ -9,6 +9,7 @@ mod worker;
 
 use std::{fs, io, thread};
 
+use actix_files::Files;
 use actix_web::middleware::Logger;
 use actix_web::{web, App, HttpServer};
 use clap::{crate_version, Arg};
@@ -43,7 +44,7 @@ fn main() -> io::Result<()> {
     let (tx, rx) = std::sync::mpsc::channel();
     let (job_queue_size, log_directory, openstack, test) = (
         config.job_queue_size,
-        config.log_directory,
+        config.log_directory.clone(),
         config.openstack,
         config.test,
     );
@@ -61,28 +62,41 @@ fn main() -> io::Result<()> {
     // job_sender
     //     .send(worker::Job::TestBranch {
     //         repository: config::Repository {
-    //             user: "bobo1239".to_string(),
+    //             user: "ixy-languages".to_string(),
     //             name: "ixy".to_string(),
     //         },
-    //         branch: "ci".to_string(),
+    //         branch: "master".to_string(),
+    //     })
+    //     .unwrap();
+
+    // job_sender
+    //     .send(worker::Job::TestPullRequest {
+    //         repository: config::Repository {
+    //             user: "bobo1239".to_string(),
+    //             name: "ixy.rs".to_string(),
+    //         },
+    //         pull_request_id: 3,
+    //         fork_user: "ixy-languages".to_string(),
+    //         fork_branch: "master".to_string(),
     //     })
     //     .unwrap();
 
     let sys = actix_rt::System::new("runtime");
 
-    let publisher = Publisher::new(github.clone());
+    let publisher = Publisher::new(github.clone(), config.public_url);
     actix_rt::spawn(
         futures::stream::iter_ok(report_receiver)
             .for_each(move |report| publisher.handle_report(report)),
     );
 
-    let github_config = config.github;
+    let (github_config, log_directory) = (config.github, config.log_directory);
     HttpServer::new(move || {
         App::new()
             .data(github_config.clone())
             .data(job_sender.clone())
             .data(github.clone())
             .wrap(Logger::default())
+            .service(Files::new("/logs/", &log_directory))
             .service(web::scope("/github/").service(github::webhook_service))
     })
     .bind(config.bind_address)?

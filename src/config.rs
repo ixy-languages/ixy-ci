@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use serde::Deserialize;
+use url::Url;
 
 use crate::github;
 
@@ -12,6 +13,7 @@ use crate::github;
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub bind_address: SocketAddr,
+    pub public_url: Url,
     pub job_queue_size: usize,
     pub log_directory: PathBuf,
     pub github: GitHubConfig,
