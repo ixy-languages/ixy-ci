@@ -2,18 +2,19 @@ use futures::Future;
 use hubcaps::comments::CommentOptions;
 use hubcaps::Github;
 use log::*;
+use url::Url;
 
 use crate::remote::Log;
-use crate::worker::TestError;
-use crate::worker::{Report, ReportContent, TestTarget};
+use crate::worker::{Report, ReportContent, TestError, TestOutput, TestTarget};
 
 pub struct Publisher {
     github: Github,
+    public_url: Url,
 }
 
 impl Publisher {
-    pub fn new(github: Github) -> Publisher {
-        Publisher { github }
+    pub fn new(github: Github, public_url: Url) -> Publisher {
+        Publisher { github, public_url }
     }
 
     pub fn handle_report(&self, report: Report) -> Box<dyn Future<Item = (), Error = ()>> {
@@ -43,7 +44,7 @@ impl Publisher {
                             .get(id)
                             .comments()
                             .create(&CommentOptions {
-                                body: format_pull_request_comment(result),
+                                body: self.format_pull_request_comment(result),
                             })
                             .map_err(|e| error!("Failed to post comment: {:?}", e))
                             .map(|_| {}),
@@ -56,38 +57,59 @@ impl Publisher {
                         report.repository,
                         result.is_ok()
                     );
+                    if let Err(e) = result {
+                        error!("Error: {}", e);
+                    }
                     Box::new(futures::future::ok(()))
                 }
             },
         }
     }
-}
 
-fn format_pull_request_comment(result: Result<(Log, Log, Log), TestError>) -> String {
-    match result {
-        Ok(logs) => format!("Test __passed__!\n\n{}", format_logs(logs),),
-        Err(test_error) => format!(
-            "Test __failed__!\n\nCause: {}",
-            match test_error {
-                TestError::PerformTest { source, logs } => {
-                    format!("{}\n\n{}", source, format_logs(logs))
+    fn format_pull_request_comment(&self, result: Result<TestOutput, TestError>) -> String {
+        match result {
+            Ok(test_output) => format!("Test __passed__!\n\n{}", self.format_logs(&test_output)),
+            Err(test_error) => format!(
+                "Test __failed__!\n\nCause: {}",
+                match test_error {
+                    TestError::PerformTest {
+                        source,
+                        test_output,
+                    } => {
+                        format!("{}\n\n{}", source, self.format_logs(&test_output))
+                    }
+                    e => e.to_string(),
                 }
-                e => e.to_string(),
-            }
-        ),
+            ),
+        }
+    }
+
+    fn format_logs(&self, test_output: &TestOutput) -> String {
+        format!(
+            "{}\n\n{}\n{}\n{}",
+            if let Some(pcap_file) = &test_output.pcap_file {
+                format!(
+                    "The captured `.pcap` can be downloaded [here]({}).",
+                    self.public_url
+                        .join("logs/")
+                        .unwrap()
+                        .join(pcap_file)
+                        .map(|url| url.to_string())
+                        .unwrap_or_else(|_| "URL error".to_string())
+                )
+            } else {
+                "The test failed before a `.pcap` was captured".to_string()
+            },
+            format_log("pktgen", &test_output.log_pktgen),
+            format_log("fwd", &test_output.log_fwd),
+            format_log("pcap", &test_output.log_pcap)
+        )
     }
 }
 
-fn format_logs(logs: (Log, Log, Log)) -> String {
-    format!(
-        "{}\n{}\n{}",
-        format_log("pktgen", logs.0),
-        format_log("fwd", logs.1),
-        format_log("pcap", logs.2)
-    )
-}
-
-fn format_log(name: &str, log: Log) -> String {
+// `Log` is currently just a type alias for `Vec` so `&Log` becomes `&Vec` which clippy doesn't like
+#[allow(clippy::ptr_arg)]
+fn format_log(name: &str, log: &Log) -> String {
     let mut log_content = String::new();
     for (command, output) in log {
         log_content += &format!("$ {}\n{}\n\n", command, output);

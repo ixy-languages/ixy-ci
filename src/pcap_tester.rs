@@ -1,16 +1,14 @@
 use byteorder::{ByteOrder, LittleEndian};
 use etherparse::{ReadError, SlicedPacket, TransportSlice};
 use log::*;
-use pcap_file::errors::PcapError;
 use pcap_file::pcap::PcapReader;
+use pcap_file::PcapError;
 use snafu::{ensure, ResultExt, Snafu};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    Pcap {
-        #[snafu(source(from(PcapError, failure::Fail::compat)))]
-        source: failure::Compat<PcapError>,
-    },
+    #[snafu(display("Failed to parse pcap file: {}", source))]
+    Pcap { source: PcapError },
     #[snafu(display(
         "Failed to parse ethernet frame: {:?}; packet: {:x?}",
         read_error,
