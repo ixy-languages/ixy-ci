@@ -1,82 +1,81 @@
 pub mod message;
 
-use actix_web::web::{BytesMut, Data, Payload};
-use actix_web::{post, Error, HttpRequest, HttpResponse};
-use crossbeam_channel::Sender;
-use crossbeam_channel::TrySendError;
-use futures::future::{self, Either};
-use futures::{Future, Stream};
+use actix_web::{
+    post,
+    web::{BytesMut, Data, Payload},
+    Error, HttpRequest, HttpResponse,
+};
+use futures::{channel::mpsc::Sender, StreamExt};
 use hubcaps::Github;
 use log::*;
-use ring::hmac::VerificationKey;
-use ring::{digest, hmac};
+use ring::hmac::{self, Key, HMAC_SHA256};
 
-use crate::config::{self, GitHubConfig};
-use crate::worker::Job;
+use crate::{
+    config::{self, GitHubConfig},
+    worker::Job,
+};
 use message::*;
 
 // TODO: Respond with "Sorry dave can't let you do that if @ixy-ci test outside of PR"
 // TODO: Improve error handling (make use of actix's ResponseError)
 
 #[post("/webhook")]
-fn webhook_service(
+async fn webhook_service(
     request: HttpRequest,
-    payload: Payload,
+    mut payload: Payload,
     config: Data<GitHubConfig>,
     github: Data<Github>,
     job_sender: Data<Sender<Job>>,
-) -> impl Future<Item = HttpResponse, Error = Error> {
-    payload
-        .map_err(Error::from)
-        .fold(BytesMut::new(), move |mut body, chunk| {
-            body.extend_from_slice(&chunk);
-            Ok::<_, Error>(body)
-        })
-        .and_then(move |body| {
-            if let Ok(message) = serde_json::from_slice::<Message>(&body) {
-                let repo = message.repository();
-                if let Some(webhook_secret) = config.webhook_secrets.get(&repo) {
-                    if !check_request(&request, &body, &message, webhook_secret) {
-                        Either::A(future::ok(HttpResponse::Unauthorized().finish()))
-                    } else {
-                        let delivery_id = request
-                            .headers()
-                            .get("X-GitHub-Delivery")
-                            .and_then(|delivery_id| delivery_id.to_str().ok())
-                            .unwrap_or("unknown");
-                        info!("Processing delivery id {}", delivery_id);
+) -> Result<HttpResponse, Error> {
+    let mut body = BytesMut::new();
+    while let Some(item) = payload.next().await {
+        body.extend_from_slice(&item?);
+    }
 
-                        Either::B(
-                            process_message(
-                                message,
-                                &config.bot_name,
-                                github.get_ref().clone(),
-                                job_sender.get_ref().clone(),
-                            )
-                            .then(|r| match r {
-                                Ok(()) => HttpResponse::Ok(),
-                                Err(_) => HttpResponse::InternalServerError(),
-                            }),
-                        )
-                    }
-                } else {
-                    error!("Failed to find webhook secret for {}", repo);
-                    Either::A(future::ok(HttpResponse::BadRequest().finish()))
-                }
+    let mut response = if let Ok(message) = serde_json::from_slice::<Message>(&body) {
+        let repo = message.repository();
+        if let Some(webhook_secret) = config.webhook_secrets.get(&repo) {
+            if !check_request(&request, &body, &message, webhook_secret) {
+                HttpResponse::Unauthorized()
             } else {
-                Either::A(future::ok(HttpResponse::BadRequest().finish()))
+                let delivery_id = request
+                    .headers()
+                    .get("X-GitHub-Delivery")
+                    .and_then(|delivery_id| delivery_id.to_str().ok())
+                    .unwrap_or("unknown");
+                info!("Processing delivery id {}", delivery_id);
+
+                let result = process_message(
+                    message,
+                    &config.bot_name,
+                    github.get_ref().clone(),
+                    job_sender.get_ref().clone(),
+                )
+                .await;
+                match result {
+                    Ok(()) => HttpResponse::Ok(),
+                    Err(_) => HttpResponse::InternalServerError(),
+                }
             }
-        })
+        } else {
+            error!("Failed to find webhook secret for {}", repo);
+            HttpResponse::BadRequest()
+        }
+    } else {
+        HttpResponse::BadRequest()
+    };
+
+    Ok(response.finish())
 }
 
-fn process_message(
+async fn process_message(
     message: Message,
     bot_name: &str,
     github: Github,
-    job_sender: Sender<Job>,
-) -> impl Future<Item = (), Error = Error> {
-    let job_future = match message {
-        Message::Ping { .. } => Either::B(future::ok(None)),
+    mut job_sender: Sender<Job>,
+) -> Result<(), Error> {
+    let job = match message {
+        Message::Ping { .. } => None,
         Message::IssueComment {
             action,
             repository,
@@ -86,55 +85,50 @@ fn process_message(
         } => {
             if action == IssueCommentAction::Created {
                 if comment.body.contains(&format!("@{} test", bot_name)) {
-                    Either::A(
-                        github
-                            .repo(&repository.owner.login, &repository.name)
-                            .pulls()
-                            .get(issue.number)
-                            .get()
-                            .map(move |pull| {
-                                Some(Job::TestPullRequest {
-                                    repository: config::Repository {
-                                        user: repository.owner.login,
-                                        name: repository.name,
-                                    },
-                                    fork_user: pull.head.user.login,
-                                    fork_branch: pull.head.commit_ref,
-                                    pull_request_id: issue.number,
-                                })
+                    github
+                        .repo(&repository.owner.login, &repository.name)
+                        .pulls()
+                        .get(issue.number)
+                        .get()
+                        .await
+                        .map(move |pull| {
+                            Some(Job::TestPullRequest {
+                                repository: config::Repository {
+                                    user: repository.owner.login,
+                                    name: repository.name,
+                                },
+                                fork_user: pull.head.user.login,
+                                fork_branch: pull.head.commit_ref,
+                                pull_request_id: issue.number,
                             })
-                            .map_err(|_| Error::from(())), // TODO: ...
-                    )
+                        })
+                        .map_err(|_| Error::from(()))? // TODO: ...
                 } else if comment.body.contains(&format!("@{} ping", bot_name)) {
-                    Either::B(future::ok(Some(Job::Ping {
+                    Some(Job::Ping {
                         repository: config::Repository {
                             user: repository.owner.login,
                             name: repository.name,
                         },
                         issue_id: issue.number,
-                    })))
+                    })
                 } else {
-                    Either::B(future::ok(None))
+                    None
                 }
             } else {
-                Either::B(future::ok(None))
+                None
             }
         }
     };
-    job_future.map(move |job| {
-        if let Some(job) = job {
-            info!(
-                "Adding new job to queue {:?} (current queue size: {})",
-                job,
-                job_sender.len(),
-            );
-            match job_sender.try_send(job) {
-                Ok(()) => {}
-                Err(TrySendError::Full(_)) => error!("Dropping job because queue is full"),
-                Err(TrySendError::Disconnected(_)) => panic!("Job queue disconnected"),
-            }
+    if let Some(job) = job {
+        info!("Adding new job to queue {:?}", job,);
+        match job_sender.try_send(job) {
+            Ok(()) => {}
+            Err(e) if e.is_full() => error!("Dropping job because queue is full"),
+            Err(e) if e.is_disconnected() => panic!("Job queue disconnected"),
+            Err(e) => error!("Unknown try_send error: {:?}", e),
         }
-    })
+    }
+    Ok(())
 }
 
 // This could be rewritten to a proper middleware but that doesn't really seem worth it atm.
@@ -156,12 +150,12 @@ fn check_request(
     }
 
     let signature = headers
-        .get("X-Hub-Signature")
-        .and_then(|signature| hex::decode(&signature.as_bytes()[5..]).ok()) // Skip the "sha1=" prefix
+        .get("X-Hub-Signature-256")
+        .and_then(|signature| hex::decode(&signature.as_bytes()[7..]).ok()) // Skip the "sha256=" prefix
         .map(|signature| {
             // ring verifies the hash in constant time
-            let v_key = VerificationKey::new(&digest::SHA1, github_webhook_secret.as_bytes());
-            hmac::verify(&v_key, payload, &signature).is_ok()
+            let key = Key::new(HMAC_SHA256, github_webhook_secret.as_bytes());
+            hmac::verify(&key, payload, &signature).is_ok()
         })
         .unwrap_or(false);
 
@@ -176,8 +170,31 @@ fn check_request(
 mod tests {
     use super::*;
 
+    use actix_web::test::TestRequest;
+
     #[test]
     fn test_check_request() {
-        // TODO
+        let payload = br#"
+        {
+            "zen": "Speak like a human.",
+            "hook_id": 1239,
+            "repository": {
+                "name": "ixy.rs",
+                "owner": {
+                    "login": "Bobo1239"
+                }
+            }
+        }"#;
+        let message = serde_json::from_slice::<Message>(payload).unwrap();
+        let request = TestRequest::get()
+            .header("X-GitHub-Event", "ping")
+            .header(
+                "X-Hub-Signature-256",
+                "sha256=bbe4db51aa010a37d2ed857abca415f5bea80550a6b4dd04e86194725d3041c8",
+            )
+            .set_payload(payload.as_ref())
+            .to_http_request();
+
+        assert!(check_request(&request, payload, &message, "foobar"))
     }
 }

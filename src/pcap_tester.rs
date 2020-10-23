@@ -1,8 +1,7 @@
 use byteorder::{ByteOrder, LittleEndian};
 use etherparse::{ReadError, SlicedPacket, TransportSlice};
 use log::*;
-use pcap_file::pcap::PcapReader;
-use pcap_file::PcapError;
+use pcap_file::{pcap::PcapReader, PcapError};
 use snafu::{ensure, ResultExt, Snafu};
 
 #[derive(Debug, Snafu)]

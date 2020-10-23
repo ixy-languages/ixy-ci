@@ -1,25 +1,23 @@
 pub use openstack::Error;
 
-use std::net::IpAddr;
-use std::process::{Command, Output};
-use std::thread;
-use std::time::Duration;
+use std::{
+    net::IpAddr,
+    process::{Command, Output},
+    thread,
+    time::Duration,
+};
 
 use fallible_iterator::FallibleIterator;
 use log::*;
-use openstack::auth::Password;
-use openstack::network::FloatingIpStatus;
-use openstack::{Cloud, ErrorKind, Refresh};
+use openstack::{auth::Password, network::FloatingIpStatus, Cloud, ErrorKind, IdOrName, Refresh};
 use waiter::Waiter;
 
-use crate::config::OpenStackConfig;
-use crate::utility;
+use crate::{config::OpenStackConfig, utility};
 
 // Fixed VM names as we require a specific OpenStack setup anyways
 const VM_PKTGEN: &str = "pktgen";
 const VM_FWD: &str = "fwd";
 const VM_PCAP: &str = "pcap";
-const VM_VOLUME_SIZE_GB: u32 = 20;
 
 const RETRY_DELAY: Duration = Duration::from_millis(500);
 const MAX_RETRIES: usize = 10;
@@ -37,7 +35,10 @@ impl OpenStack {
             &config.password,
             &config.user_domain,
         )?
-        .with_project_scope(&config.project_name, &config.project_domain);
+        .with_project_scope(
+            IdOrName::from_name(&config.project_name),
+            IdOrName::from_name(&config.project_domain),
+        );
         Ok(OpenStack {
             cloud: Cloud::new(auth),
             config,
@@ -51,10 +52,10 @@ impl OpenStack {
         let ip_fwd = self.create_server(VM_FWD)?;
         let ip_pcap = self.create_server(VM_PCAP)?;
 
-        self.add_port_to_vm(VM_PKTGEN, "pktgen")?;
-        self.add_port_to_vm(VM_FWD, "fwd-in")?;
-        self.add_port_to_vm(VM_FWD, "fwd-out")?;
-        self.add_port_to_vm(VM_PCAP, "pcap")?;
+        self.add_port_to_vm(VM_PKTGEN, "pktgen", "pktgen-fwd")?;
+        self.add_port_to_vm(VM_FWD, "fwd-in", "pktgen-fwd")?;
+        self.add_port_to_vm(VM_FWD, "fwd-out", "fwd-pcap")?;
+        self.add_port_to_vm(VM_PCAP, "pcap", "fwd-pcap")?;
 
         Ok((ip_pktgen, ip_fwd, ip_pcap))
     }
@@ -88,15 +89,18 @@ impl OpenStack {
         let mut server = self
             .cloud
             .new_server(name, &*self.config.flavor)
-            .with_new_boot_volume(&*self.config.image, VM_VOLUME_SIZE_GB)
-            .with_network("internet")
+            .with_image(&*self.config.image)
+            .with_network(&*self.config.internet_network)
             .with_keypair(&*self.config.keypair)
             .create()?
             .wait()?;
 
         let internet_port = self.cloud.find_ports().with_device_id(server.id()).one()?;
 
-        let mut floating_ip = self.cloud.new_floating_ip("internet_pool").create()?;
+        let mut floating_ip = self
+            .cloud
+            .new_floating_ip(&*self.config.floating_ip_pool)
+            .create()?;
         info!("Associating floating ip");
         floating_ip.associate(internet_port, None)?;
 
@@ -154,14 +158,15 @@ impl OpenStack {
         self.wrap_openstack_cli(&["volume", "delete", id], |_| Ok(()))
     }
 
-    fn add_port_to_vm(&self, server: &str, port: &str) -> Result<(), Error> {
+    fn add_port_to_vm(&self, server: &str, port: &str, _network: &str) -> Result<(), Error> {
         // TODO: This fails for some reason...
-        // let port = cloud
+        // let port = self
+        //     .cloud
         //     .find_ports()
         //     .with_name(port)
-        //     .with_network("pktgen-fwd")
+        //     .with_network(network)
         //     .one()?;
-        // port.with_device_id(server.id()).with_device_owner("compute:nova").with_admin_state_up(true).save().?;
+        // port.with_device_id(server).save()
 
         self.wrap_openstack_cli(&["server", "add", "port", server, port], |_| Ok(()))
     }

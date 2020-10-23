@@ -1,7 +1,9 @@
-use std::fs::File;
-use std::io::{self, ErrorKind, Read};
-use std::net::{SocketAddr, TcpStream};
-use std::path::Path;
+use std::{
+    fs::File,
+    io::{self, ErrorKind, Read},
+    net::{SocketAddr, TcpStream},
+    path::Path,
+};
 
 use log::*;
 use snafu::{ensure, ResultExt, Snafu};

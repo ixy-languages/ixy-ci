@@ -1,17 +1,26 @@
-use std::io;
-use std::net::IpAddr;
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::{
+    io,
+    net::IpAddr,
+    path::{Path, PathBuf},
+    time::{Duration, Instant},
+};
 
 use chrono::{SecondsFormat, Utc};
-use crossbeam_channel::{Receiver, Sender};
+use futures::{
+    channel::mpsc::{self, Receiver, Sender, UnboundedReceiver, UnboundedSender},
+    SinkExt, StreamExt,
+};
 use log::*;
 use snafu::{ResultExt, Snafu};
 
-use crate::config::{OpenStackConfig, Repository, RepositoryConfig, TestConfig};
-use crate::openstack::OpenStack;
-use crate::remote::{self, Log, Remote};
-use crate::{openstack, pcap_tester, utility};
+use crate::{
+    config::{OpenStackConfig, Repository, RepositoryConfig, TestConfig},
+    openstack,
+    openstack::OpenStack,
+    pcap_tester,
+    remote::{self, Log, Remote},
+    utility,
+};
 
 const PCAP_FILE: &str = "capture.pcap";
 const PCAP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -45,6 +54,8 @@ pub enum TestError {
 pub enum PerformTestError {
     #[snafu(display("Failed to prepare a VM: {}", source))]
     PrepareVm { source: remote::Error },
+    #[snafu(display("A thread panicked during VM preparation"))]
+    ThreadPanicked,
     #[snafu(display("An error occurred on a VM: {}", source))]
     RemoteError { source: remote::Error },
     #[snafu(display("pcap test error: {}", source))]
@@ -72,7 +83,7 @@ pub enum Job {
 pub struct Worker {
     log_directory: PathBuf,
     job_receiver: Receiver<Job>,
-    report_sender: Sender<Report>,
+    report_sender: UnboundedSender<Report>,
     openstack: OpenStack,
     test_config: TestConfig,
 }
@@ -83,9 +94,9 @@ impl Worker {
         log_directory: PathBuf,
         openstack: OpenStackConfig,
         test_config: TestConfig,
-    ) -> (Worker, Sender<Job>, Receiver<Report>) {
-        let (job_sender, job_receiver) = crossbeam_channel::bounded(job_queue_size);
-        let (report_sender, future_receiver) = crossbeam_channel::unbounded();
+    ) -> (Worker, Sender<Job>, UnboundedReceiver<Report>) {
+        let (job_sender, job_receiver) = mpsc::channel(job_queue_size);
+        let (report_sender, future_receiver) = mpsc::unbounded();
         (
             Worker {
                 log_directory,
@@ -99,8 +110,8 @@ impl Worker {
         )
     }
 
-    pub fn run(&self) {
-        while let Ok(job) = self.job_receiver.recv() {
+    pub async fn run(&mut self) {
+        while let Some(job) = self.job_receiver.next().await {
             match job {
                 Job::Ping {
                     repository,
@@ -111,6 +122,7 @@ impl Worker {
                             repository,
                             content: ReportContent::Pong { issue_id },
                         })
+                        .await
                         .expect("failed to send report");
                 }
                 Job::TestBranch { repository, branch } => {
@@ -124,6 +136,7 @@ impl Worker {
                                 test_target: TestTarget::Branch(branch),
                             },
                         })
+                        .await
                         .expect("failed to send report");
                 }
                 Job::TestPullRequest {
@@ -148,6 +161,7 @@ impl Worker {
                                 test_target: TestTarget::PullRequest(pull_request_id),
                             },
                         })
+                        .await
                         .expect("failed to send report");
                 }
             }
@@ -253,8 +267,7 @@ impl Worker {
             &repo_config.build,
             &repository,
             &branch,
-        )
-        .context(PrepareVm)?;
+        )?;
 
         info!("Starting pcap");
         let env = format!(
@@ -352,12 +365,16 @@ impl Worker {
 }
 
 fn fetch_repo_config(repository: &Repository, branch: &str) -> Result<RepositoryConfig, TestError> {
-    let toml = reqwest::get(&format!(
+    // We're forced to use the blocking Client atm since openstack tries to spawn it's own tokio
+    // runtime (it's not async/await compatible yet) which would conflict with anyone we're
+    // creating. But without a tokio runtime async reqwest doesn't work...
+    let response = reqwest::blocking::get(&format!(
         "https://raw.githubusercontent.com/{}/{}/ixy-ci.toml",
         repository, branch
     ))
-    .and_then(|r| r.error_for_status()?.text())
+    .and_then(|r| Ok(r.error_for_status()?))
     .context(FetchRepositoryConfig)?;
+    let toml = response.text().context(FetchRepositoryConfig)?;
     toml::from_str(&toml).context(ConfigError)
 }
 
@@ -366,22 +383,45 @@ fn prepare_vms(
     setup: &[String],
     repository: &Repository,
     branch: &str,
-) -> Result<(), remote::Error> {
-    for remote in remotes {
-        remote.execute_command("sudo apt update")?;
-        remote.execute_command("sudo apt install -y git")?;
-        remote.execute_command(&format!(
-            "git clone https://github.com/{} --branch {} --single-branch --recurse-submodules",
-            repository, branch
-        ))?;
-        for step in setup {
-            remote.execute_command(&format!("cd {} && {}", repository.name, step))?;
+) -> Result<(), PerformTestError> {
+    // Perform VM initialization concurrently
+    let results = crossbeam_utils::thread::scope(|s| {
+        let mut join_handles = Vec::new();
+        for remote in remotes {
+            let handle = s.spawn(move |_| {
+                remote.execute_command("sudo apt update")?;
+                remote.execute_command("sudo apt install -y git")?;
+                remote.execute_command(&format!(
+                    "git clone https://github.com/{} --branch {} --single-branch --recurse-submodules",
+                    repository, branch
+                ))?;
+                for step in setup {
+                    remote.execute_command(&format!("cd {} && {}", repository.name, step))?;
+                }
+                // Required for CancellableCommand atm
+                remote.upload_file(Path::new("runner-bin"), Path::new("runner"), 0o777)?;
+                remote.execute_command("sudo mv runner /usr/bin/runner")?;
+                Ok(())
+            });
+            join_handles.push(handle);
         }
-        // Required for CancellableCommand atm
-        remote.upload_file(Path::new("runner-bin"), Path::new("runner"), 0o777)?;
-        remote.execute_command("sudo mv runner /usr/bin/runner")?;
-    }
-    Ok(())
+        let mut results = Vec::new();
+        for handle in join_handles {
+            let result = handle
+                .join()
+                .map_err(|_| PerformTestError::ThreadPanicked)?
+                .context(PrepareVm);
+            results.push(result);
+        }
+        Ok(results)
+    })
+    .map_err(|_| PerformTestError::ThreadPanicked)??;
+
+    // Transform Vec<Result> to Result<Vec>
+    results
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .map(|_| ())
 }
 
 pub struct TestContext {

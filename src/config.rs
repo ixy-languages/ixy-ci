@@ -1,8 +1,10 @@
-use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::fmt::{self, Display, Formatter};
-use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::{
+    collections::HashMap,
+    convert::TryFrom,
+    fmt::{self, Display, Formatter},
+    net::SocketAddr,
+    path::PathBuf,
+};
 
 use serde::Deserialize;
 use url::Url;
@@ -34,9 +36,11 @@ pub struct GitHubConfig {
 pub struct OpenStackConfig {
     pub flavor: String,
     pub image: String,
+    pub internet_network: String,
+    pub floating_ip_pool: String,
+    pub ssh_login: String,
     pub keypair: String,
     pub private_key_path: PathBuf,
-    pub ssh_login: String,
 
     // OpenStack API
     pub auth_url: String,

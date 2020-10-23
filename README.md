@@ -47,13 +47,15 @@ in the [ixy pktgen example](https://github.com/emmericp/ixy/blob/master/src/app/
 These instructions are only needed when you want to deploy your own instance of ixy-ci.
 
 ### OpenStack
+- ixy-ci assumes a dedicated OpenStack project with no other users.
 - Network `pktgen-fwd`
     - Port `pktgen`
     - Port `fwd-in`
 - Network `fwd-pcap`
     - Port `fwd-out`
     - Port `pcap`
-- Network require a default subnet for port creation to succeed
+- Networks require a subnet for port creation/attachment to succeed (disable DHCP)
+    - This may be incorrect since it seems to work without a subnet throught the `openstack` CLI
 - Disable "Port Security" on all ports
 - Create a keypair for ixy-ci to SSH into the spawned VMs
 
@@ -80,13 +82,54 @@ token_ (GitHub / Setting / Developer settings) with access to the `public_repo` 
 ### Deploy with Docker
 
 ```
-cargo build --release
-cd runner; cargo build --release; cd -
+make # Ctrl+C once running
 docker build . -t ixy-ci
 docker volume create ixy-ci-config
 cp ~/.ssh/id_rsa /var/lib/docker/volumes/ixy-ci-config/_data/
 cp config.toml.example /var/lib/docker/volumes/ixy-ci-config/_data/config.toml
 docker run --mount source=ixy-ci-config,target=/config -p 127.0.0.1:9999:8080 --restart always -d --name ixy-ci ixy-ci
+```
+
+## MicroStack
+For local development you can use [MicroStack](https://microstack.run/) which deploys OpenStack
+on your machine. (in a snap so without affecting the rest of your system too much)
+
+Here are complete instructions for getting up and running:
+```
+# Setup MicroStack
+sudo snap install microstack --devmode --beta
+sudo microstack.init --auto --control
+# Get password for "admin"; Web UI is at http://10.20.20.1
+sudo snap get microstack config.credentials.keystone-password
+
+# Import Debian 10 image
+wget https://cdimage.debian.org/cdimage/openstack/current-10/debian-10-openstack-amd64.qcow2
+microstack.openstack image create --container-format bare --disk-format qcow2 --file debian-10-openstack-amd64.qcow2 debian-10-openstack-amd64
+rm debian-10-openstack-amd64.qcow2
+
+# Create virtual networks
+microstack.openstack network create pktgen-fwd --disable-port-security
+microstack.openstack port create pktgen --network pktgen-fwd
+microstack.openstack port create fwd-in --network pktgen-fwd
+
+microstack.openstack network create fwd-pcap --disable-port-security
+microstack.openstack port create fwd-out --network fwd-pcap
+microstack.openstack port create pcap --network fwd-pcap
+
+# Import SSH public key
+microstack.openstack keypair create ixy-ci --public-key ~/.ssh/id_rsa.pub
+
+# Adjust config.toml:
+# Set the openstack password (see command above)
+# Set the GitHub API token
+# Adjust the path to the SSH private key
+
+# After a reboot you can start MicroStack again with:
+sudo snap start microstack
+
+# Remove MicroStack again when you're done
+sudo snap remove microstack --purge
+# Restart computer to also get rid of left over virtual interfaces etc.
 ```
 
 ## TODO
