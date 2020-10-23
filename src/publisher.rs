@@ -1,11 +1,13 @@
-use futures::Future;
-use hubcaps::comments::CommentOptions;
-use hubcaps::Github;
+use futures::{channel::mpsc::UnboundedReceiver, StreamExt};
+use hubcaps::{comments::CommentOptions, Error, Github};
 use log::*;
 use url::Url;
 
-use crate::remote::Log;
-use crate::worker::{Report, ReportContent, TestError, TestOutput, TestTarget};
+use crate::{
+    config::Repository,
+    remote::Log,
+    worker::{Report, ReportContent, TestError, TestOutput, TestTarget},
+};
 
 pub struct Publisher {
     github: Github,
@@ -17,38 +19,32 @@ impl Publisher {
         Publisher { github, public_url }
     }
 
-    pub fn handle_report(&self, report: Report) -> Box<dyn Future<Item = (), Error = ()>> {
+    pub async fn run(self, mut report_receiver: UnboundedReceiver<Report>) {
+        while let Some(report) = report_receiver.next().await {
+            if let Err(e) = self.handle_report(report).await {
+                error!("Failed to publish result: {:?}", e)
+            }
+        }
+    }
+
+    pub async fn handle_report(&self, report: Report) -> Result<(), Error> {
         match report.content {
-            ReportContent::Pong { issue_id } => Box::new(
-                self.github
-                    .repo(report.repository.user, report.repository.name)
-                    .issues()
-                    .get(issue_id)
-                    .comments()
-                    .create(&CommentOptions {
-                        body: "pong".to_string(),
-                    })
-                    .map_err(|e| error!("Failed to post comment: {:?}", e))
-                    .map(|_| {}),
-            ),
+            ReportContent::Pong { issue_id } => {
+                self.post_comment_on_issue(&report.repository, issue_id, "pong".to_string())
+                    .await
+            }
             ReportContent::TestResult {
                 result,
                 test_target,
             } => match test_target {
                 TestTarget::PullRequest(id) => {
                     info!("Posting result in {}#{}", report.repository, id);
-                    Box::new(
-                        self.github
-                            .repo(report.repository.user, report.repository.name)
-                            .issues()
-                            .get(id)
-                            .comments()
-                            .create(&CommentOptions {
-                                body: self.format_pull_request_comment(result),
-                            })
-                            .map_err(|e| error!("Failed to post comment: {:?}", e))
-                            .map(|_| {}),
+                    self.post_comment_on_issue(
+                        &report.repository,
+                        id,
+                        self.format_pull_request_comment(result),
                     )
+                    .await
                 }
                 TestTarget::Branch(branch) => {
                     info!(
@@ -60,10 +56,26 @@ impl Publisher {
                     if let Err(e) = result {
                         error!("Error: {}", e);
                     }
-                    Box::new(futures::future::ok(()))
+                    Ok(())
                 }
             },
         }
+    }
+
+    pub async fn post_comment_on_issue(
+        &self,
+        repository: &Repository,
+        issue_id: u64,
+        text: String,
+    ) -> Result<(), Error> {
+        self.github
+            .repo(&repository.user, &repository.name)
+            .issues()
+            .get(issue_id)
+            .comments()
+            .create(&CommentOptions { body: text })
+            .await
+            .map(|_| ())
     }
 
     fn format_pull_request_comment(&self, result: Result<TestOutput, TestError>) -> String {

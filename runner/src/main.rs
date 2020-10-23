@@ -5,6 +5,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{env, thread};
 
+// Use the `x86_64-unknown-linux-musl` for a completely static binary (otherwise rustc may
+// dynamically stuff from newer glibc versions)
+
 fn main() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next() {
