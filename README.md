@@ -82,8 +82,7 @@ token_ (GitHub / Setting / Developer settings) with access to the `public_repo` 
 ### Deploy with Docker
 
 ```
-cargo build --release
-cd runner; cargo build --release; cd -
+make # Ctrl+C once running
 docker build . -t ixy-ci
 docker volume create ixy-ci-config
 cp ~/.ssh/id_rsa /var/lib/docker/volumes/ixy-ci-config/_data/
